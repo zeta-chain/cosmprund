@@ -2,8 +2,9 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
+
+	"log"
 
 	"github.com/cosmos/cosmos-sdk/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -45,6 +46,7 @@ func pruneCmd() *cobra.Command {
 			errs, _ := errgroup.WithContext(ctx)
 			var err error
 			if tendermint {
+				log.Println("pruning tendermint data")
 				errs.Go(func() error {
 					if err = pruneTMData(args[0]); err != nil {
 						return err
@@ -54,6 +56,7 @@ func pruneCmd() *cobra.Command {
 			}
 
 			if cosmosSdk {
+				log.Println("pruning cosmos sdk data")
 				err = pruneAppState(args[0])
 				if err != nil {
 					return err
@@ -80,13 +83,14 @@ func pruneAppState(home string) error {
 	}
 
 	// Get BlockStore
+	log.Println("opening application db")
 	appDB, err := db.NewGoLevelDBWithOpts("application", dbDir, &o)
 	if err != nil {
 		return err
 	}
 
 	//TODO: need to get all versions in the store, setting randomly is too slow
-	fmt.Println("pruning application state")
+	log.Println("loading application store")
 
 	// only mount keys from core sdk
 	// todo allow for other keys to be mounted
@@ -593,14 +597,14 @@ func pruneAppState(home string) error {
 			keys[key] = value
 		}
 	} else if app == "desmos" {
-	    // https://github.com/desmos-labs/desmos/blob/master/app/app.go#L388
+		// https://github.com/desmos-labs/desmos/blob/master/app/app.go#L388
 		desmosKeys := types.NewKVStoreKeys(
 			// common modules
 			"feegrant", // feegrant.StoreKey,
 			"wasm",     // wasm.StoreKey,
 			"authz",    // authzkeeper.StoreKey,
 			// mainnet since v4.7.0
-			"profiles", // profilestypes.StoreKey,
+			"profiles",      // profilestypes.StoreKey,
 			"relationships", // relationshipstypes.StoreKey,
 			"subspaces",     // subspacestypes.StoreKey,
 			"posts",         // poststypes.StoreKey,
@@ -621,11 +625,13 @@ func pruneAppState(home string) error {
 		appStore.MountStoreWithDB(value, sdk.StoreTypeIAVL, nil)
 	}
 
+	log.Println("loading latest version")
 	err = appStore.LoadLatestVersion()
 	if err != nil {
 		return err
 	}
 
+	log.Println("loading all versions")
 	versions := appStore.GetAllVersions()
 
 	v64 := make([]int64, len(versions))
@@ -633,13 +639,13 @@ func pruneAppState(home string) error {
 		v64[i] = int64(versions[i])
 	}
 
-	fmt.Println(len(v64))
+	log.Printf("len of versions %d\n", len(v64))
 
 	appStore.PruneHeights = v64[:len(v64)-10]
 
 	appStore.PruneStores()
 
-	fmt.Println("compacting application state")
+	log.Println("compacting application state")
 	if err := appDB.ForceCompact(nil, nil); err != nil {
 		return err
 	}
@@ -658,6 +664,7 @@ func pruneTMData(home string) error {
 	}
 
 	// Get BlockStore
+	log.Println("getting block store")
 	blockStoreDB, err := db.NewGoLevelDBWithOpts("blockstore", dbDir, &o)
 	if err != nil {
 		return err
@@ -665,6 +672,7 @@ func pruneTMData(home string) error {
 	blockStore := tmstore.NewBlockStore(blockStoreDB)
 
 	// Get StateStore
+	log.Println("getting state store")
 	stateDB, err := db.NewGoLevelDBWithOpts("state", dbDir, &o)
 	if err != nil {
 		return err
@@ -678,14 +686,14 @@ func pruneTMData(home string) error {
 
 	errs, _ := errgroup.WithContext(context.Background())
 	errs.Go(func() error {
-		fmt.Println("pruning block store")
+		log.Println("pruning block store")
 		// prune block store
 		blocks, err = blockStore.PruneBlocks(pruneHeight)
 		if err != nil {
 			return err
 		}
 
-		fmt.Println("compacting block store")
+		log.Println("compacting block store")
 		if err := blockStoreDB.ForceCompact(nil, nil); err != nil {
 			return err
 		}
@@ -693,14 +701,14 @@ func pruneTMData(home string) error {
 		return nil
 	})
 
-	fmt.Println("pruning state store")
+	log.Println("pruning state store")
 	// prune state store
 	err = stateStore.PruneStates(base, pruneHeight)
 	if err != nil {
 		return err
 	}
 
-	fmt.Println("compacting state store")
+	log.Println("compacting state store")
 	if err := stateDB.ForceCompact(nil, nil); err != nil {
 		return err
 	}
